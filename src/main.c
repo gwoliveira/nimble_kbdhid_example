@@ -19,6 +19,7 @@
 
 #include <string.h>
 #include "esp_log.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -29,17 +30,9 @@
 #include "hid_func.h"
 #include "gpio_func.h"
 
-/* for nvs_storage*/
-#define LOCAL_NAMESPACE "storage"
-
-
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4, 0, 0)
-typedef  nvs_handle nvs_handle_t;
-#endif
+#include "host/ble_store.h"
 
 static const char *tag = "NimBLEKBD_main";
-
-nvs_handle_t Nvs_storage_handle = 0;
 
 /* from ble_func.c */
 extern void ble_init();
@@ -47,15 +40,37 @@ extern void ble_init();
 void
 app_main(void)
 {
-    /* Initialize NVS — it is used to store PHY calibration data and Nimble bonding data */
+    ESP_LOGI(tag, "app_main start");
+
+    /* Initialize NVS — it is used to store PHY calibration data and bonding data */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(tag, "NVS partition was truncated; erasing...");
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-    ESP_ERROR_CHECK( nvs_open(LOCAL_NAMESPACE, NVS_READWRITE, &Nvs_storage_handle) );
+    ESP_LOGI(tag, "NVS initialized");
 
+    ESP_LOGI(tag, "Starting BLE initialization...");
+    ble_init();
+    ESP_LOGI(tag, "BLE init ok");
+
+        // Optional: wipe bonds and IRKs to recover from bad state
+    #ifdef CONFIG_EXAMPLE_WIPE_BONDS
+        esp_err_t nvs_rc = nvs_flash_init();
+        if (nvs_rc == ESP_ERR_NVS_NO_FREE_PAGES || nvs_rc == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            ESP_LOGW(tag, "NVS partition was truncated; erasing...");
+            nvs_flash_erase();
+            nvs_rc = nvs_flash_init();
+        }
+        if (nvs_rc == ESP_OK) {
+            ble_store_util_delete_all();
+        }
+    #endif
+
+    // Delay to let BLE stack initialize fully
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     QueueHandle_t buttons_queue = xQueueCreate(10, sizeof(uint32_t));
     if (!buttons_queue) {
@@ -64,14 +79,13 @@ app_main(void)
         esp_restart();
     }
 
+    ESP_LOGI(tag, "Creating GPIO task...");
     if (xTaskCreate(gpio_btn_task, "gpio_btn_task", 2048, buttons_queue, 10, NULL) != pdPASS) {
         ESP_LOGE(tag, "Can not create gpio_btn_task!");
         vTaskDelay(pdMS_TO_TICKS(30000));
         esp_restart();
     }
-
-    ble_init();
-    ESP_LOGI(tag, "BLE init ok, waiting for buttons ...");
+    ESP_LOGI(tag, "GPIO task created, waiting for buttons ...");
 
     while (1) {
         uint32_t button, key_to_send;

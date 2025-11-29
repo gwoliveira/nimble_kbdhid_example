@@ -2,6 +2,8 @@
 #include "esp_log.h"
 #include "esp_nimble_hci.h"
 
+/* NimBLE store (bond/IRK persistence): forward-declare init function */
+
 /* BLE */
 #include "console/console.h"
 #include "freertos/FreeRTOS.h"
@@ -17,6 +19,9 @@ static const char *tag = "NimBLEKBD_BLEFUNC";
 
 static int bleprph_gap_event(struct ble_gap_event *event, void *arg);
 static uint8_t own_addr_type;
+
+/* Forward decl: provided by NimBLE store module */
+void ble_store_config_init(void);
 
 /**
  * Logs information about a connection to the console.
@@ -174,6 +179,13 @@ bleprph_gap_event(struct ble_gap_event *event, void *arg)
             bleprph_print_conn_desc(&desc);
 
             hid_clean_vars(&desc);
+            
+            // Proactively initiate security to start pairing
+            ESP_LOGI(tag, "Initiating security (pairing)...");
+            rc = ble_gap_security_initiate(event->connect.conn_handle);
+            if (rc != 0) {
+                ESP_LOGW(tag, "Failed to initiate security; rc=%d", rc);
+            }
         } else {
             /* Connection failed; resume advertising. */
             bleprph_advertise();
@@ -207,8 +219,29 @@ bleprph_gap_event(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_ENC_CHANGE:
         /* Encryption has been enabled or disabled for this connection. */
-        ESP_LOGI(tag, "encryption change event; status=%d ",
-                    event->enc_change.status);
+        ESP_LOGI(tag, "encryption change event; status=%d conn_handle=%d",
+                    event->enc_change.status,
+                    event->enc_change.conn_handle);
+        
+        if (event->enc_change.status == 0) {
+            rc = ble_gap_conn_find(event->enc_change.conn_handle, &desc);
+            if (rc == 0) {
+                ESP_LOGI(tag, "Pairing SUCCESS - encrypted=%d authenticated=%d bonded=%d",
+                    desc.sec_state.encrypted,
+                    desc.sec_state.authenticated,
+                    desc.sec_state.bonded);
+            }
+        } else {
+            ESP_LOGE(tag, "Encryption/Pairing FAILED with status=%d", event->enc_change.status);
+            // Common BLE_HS error codes:
+            // 0x201 (513) = BLE_HS_SM_US_ERR(BLE_SM_ERR_PASSKEY) = Passkey entry failed
+            // 0x202 (514) = BLE_HS_SM_US_ERR(BLE_SM_ERR_OOB) = OOB not available  
+            // 0x203 (515) = BLE_HS_SM_US_ERR(BLE_SM_ERR_AUTHREQ) = Authentication requirements
+            // 0x205 (517) = BLE_HS_SM_US_ERR(BLE_SM_ERR_PAIR_NOT_SUPP) = Pairing not supported
+            // 0x208 (520) = BLE_HS_SM_US_ERR(BLE_SM_ERR_CONFIRM_MISMATCH) = Confirm value failed
+            // 0x20C (524) = BLE_HS_SM_US_ERR(BLE_SM_ERR_TIMEOUT) = Pairing timeout
+            // 0x30D (781) = BLE_HS_SM_US_ERR(BLE_SM_ERR_UNSPECIFIED) = Unspecified reason
+        }
         return 0;
 
     case BLE_GAP_EVENT_SUBSCRIBE:
@@ -259,28 +292,80 @@ bleprph_gap_event(struct ble_gap_event *event, void *arg)
         return BLE_GAP_REPEAT_PAIRING_RETRY;
 
     case BLE_GAP_EVENT_PASSKEY_ACTION:
-        ESP_LOGI(tag, "PASSKEY_ACTION_EVENT started \n");
+        ESP_LOGI(tag, "PASSKEY_ACTION_EVENT; action=%d conn_handle=%d", 
+                 event->passkey.params.action,
+                 event->passkey.conn_handle);
         struct ble_sm_io pkey = {0};
 
         if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
             pkey.action = event->passkey.params.action;
-
-            /* This is the passkey to be entered on peer */
             pkey.passkey = Disp_password;
-
             ESP_LOGI(tag, "Enter passkey %d on the peer side", pkey.passkey);
             rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
             ESP_LOGI(tag, "ble_sm_inject_io result: %d", rc);
+        } else if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
+            ESP_LOGI(tag, "Numeric comparison: %06lu", (unsigned long)event->passkey.params.numcmp);
+            pkey.action = event->passkey.params.action;
+            pkey.numcmp_accept = 1;
+            rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+            ESP_LOGI(tag, "ble_sm_inject_io numcmp result: %d", rc);
+        } else if (event->passkey.params.action == BLE_SM_IOACT_NONE) {
+            ESP_LOGI(tag, "No passkey action required (Just Works pairing)");
         } else if (event->passkey.params.action == BLE_SM_IOACT_INPUT ||
-                  event->passkey.params.action == BLE_SM_IOACT_NUMCMP ||
-                  event->passkey.params.action == BLE_SM_IOACT_OOB ) {
-            ESP_LOGE(tag, "BLE_SM_IOACT_INPUT, BLE_SM_IOACT_NUMCMP, BLE_SM_IOACT_OOB"
-                          " bonding not supported!");
+                  event->passkey.params.action == BLE_SM_IOACT_OOB) {
+            ESP_LOGE(tag, "BLE_SM_IOACT_INPUT/OOB bonding not supported!");
+            return BLE_HS_SM_US_ERR(BLE_SM_ERR_PASSKEY);
+        }
+        return 0;
+
+    case BLE_GAP_EVENT_PARING_COMPLETE:
+        ESP_LOGI(tag, "pairing complete event; status=%d conn_handle=%d",
+                    event->pairing_complete.status,
+                    event->pairing_complete.conn_handle);
+        
+        if (event->pairing_complete.status != 0) {
+            ESP_LOGE(tag, "Pairing FAILED with status=%d (0x%X)", 
+                     event->pairing_complete.status,
+                     event->pairing_complete.status);
+            // Common BLE_HS_SM error codes:
+            // 0x0201 (513) = Passkey entry failed
+            // 0x0202 (514) = OOB not available  
+            // 0x0203 (515) = Authentication requirements
+            // 0x0205 (517) = Pairing not supported
+            // 0x0208 (520) = Confirm value mismatch
+            // 0x030D (781) = Unspecified reason
+        } else {
+            ESP_LOGI(tag, "Pairing SUCCESS!");
+            rc = ble_gap_conn_find(event->pairing_complete.conn_handle, &desc);
+            if (rc == 0) {
+                ESP_LOGI(tag, "After pairing: encrypted=%d authenticated=%d bonded=%d",
+                    desc.sec_state.encrypted,
+                    desc.sec_state.authenticated,
+                    desc.sec_state.bonded);
+            }
         }
         return 0;
 
     default:
         ESP_LOGI(tag, "Unknown GAP event: %d", event->type);
+        
+        /* Map known events to names per provided IDs */
+        switch (event->type) {
+        case BLE_GAP_EVENT_IDENTITY_RESOLVED: /* 16 */
+            ESP_LOGI(tag, "IDENTITY_RESOLVED");
+            break;
+        case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE: /* 18 */
+            ESP_LOGI(tag, "PHY_UPDATE_COMPLETE");
+            break;
+        case BLE_GAP_EVENT_DATA_LEN_CHG: /* 34 */
+            ESP_LOGI(tag, "DATA_LEN_CHG");
+            break;
+        case BLE_GAP_EVENT_LINK_ESTAB: /* 38 */
+            ESP_LOGI(tag, "LINK_ESTAB");
+            break;
+        default:
+            break;
+        }
     }
 
     return 0;
@@ -327,15 +412,20 @@ bleprph_host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
-/* this declaration was taken from examples */
-void ble_store_config_init(void);
+
 
 void
 ble_init()
 {
-
-
-    nimble_port_init();
+    ESP_LOGI(tag, "ble_init: nimble_port_init starting...");
+    int rc = nimble_port_init();
+    if (rc != ESP_OK) {
+        ESP_LOGE(tag, "nimble_port_init failed: %d", rc);
+        return;
+    }
+    ESP_LOGI(tag, "ble_init: nimble_port_init done");
+    /* Configure persistent storage for bonds/IRKs */
+    ble_store_config_init();
     /* Initialize the NimBLE host configuration. */
     ble_hs_cfg.reset_cb = bleprph_on_reset;
     ble_hs_cfg.sync_cb = bleprph_on_sync;
@@ -361,14 +451,21 @@ ble_init()
     ble_hs_cfg.sm_sc = 1;
 #else
     ble_hs_cfg.sm_sc = 0;
-#ifdef CONFIG_EXAMPLE_BONDING
-    ble_hs_cfg.sm_our_key_dist = 1;
-    ble_hs_cfg.sm_their_key_dist = 1;
-#endif
 #endif
 
-    int rc = gatt_svr_init();
-    assert(rc == 0);
+#ifdef CONFIG_EXAMPLE_BONDING
+    /* Explicitly request encryption and identity keys for both peers */
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+#endif
+
+    ESP_LOGI(tag, "ble_init: initializing GATT server...");
+    rc = gatt_svr_init();
+    if (rc != 0) {
+        ESP_LOGE(tag, "gatt_svr_init failed: %d", rc);
+        return;
+    }
+    ESP_LOGI(tag, "ble_init: GATT server initialized");
 
     // --- Commented out because it is set in sdkconfig.h
     // with CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME
@@ -377,10 +474,14 @@ ble_init()
     // assert(rc == 0);
 
     /* Set GAP appearance */
+    ESP_LOGI(tag, "ble_init: setting GAP appearance...");
     rc = ble_svc_gap_device_appearance_set(HID_KEYBOARD_APPEARENCE); /* HID Keyboard*/
-    assert(rc == 0);
+    if (rc != 0) {
+        ESP_LOGE(tag, "ble_svc_gap_device_appearance_set failed: %d", rc);
+        return;
+    }
 
-    ble_store_config_init();
-
+    ESP_LOGI(tag, "ble_init: starting NimBLE host task...");
     nimble_port_freertos_init(bleprph_host_task);
+    ESP_LOGI(tag, "ble_init: host task started, init complete");
 }

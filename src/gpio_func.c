@@ -107,13 +107,22 @@ gpio_reset()
 void
 gpio_setup()
 {
-    esp_rom_gpio_pad_select_gpio(CAPS_GPIO);
-    gpio_set_direction(CAPS_GPIO, GPIO_MODE_OUTPUT);
+    esp_err_t ret;
+    
+    // Configure LED output (no need for esp_rom_gpio_pad_select_gpio in IDF 5.x)
+    ESP_LOGI(tag, "Configuring LED GPIO %d...", CAPS_GPIO);
+    ret = gpio_set_direction(CAPS_GPIO, GPIO_MODE_OUTPUT);
+    if (ret != ESP_OK) {
+        ESP_LOGE(tag, "Failed to set LED direction: %d", ret);
+    }
     gpio_set_level(CAPS_GPIO, 0);
+
+    ESP_LOGI(tag, "Setting up %d button GPIOs...", Hid_buttons_count);
 
     uint64_t in_pins = 0;
     for (int i = 0; i < Hid_buttons_count; ++i) {
         in_pins |= (1ULL << Hid_buttons[i].gpio);
+        ESP_LOGI(tag, "  Button %d: GPIO%d", i, Hid_buttons[i].gpio);
     }
     gpio_config_t io_conf;
     memset(&io_conf, 0, sizeof(io_conf));
@@ -121,16 +130,38 @@ gpio_setup()
     io_conf.pin_bit_mask = in_pins;
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pull_up_en = 1;
-    gpio_config(&io_conf);
+    
+    ESP_LOGI(tag, "Applying GPIO config...");
+    ret = gpio_config(&io_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(tag, "gpio_config failed: %d", ret);
+        return;
+    }
 
     // GPIO ISR binding
-    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+    ESP_LOGI(tag, "Installing GPIO ISR service...");
+    ret = gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+    if (ret != ESP_OK) {
+        ESP_LOGE(tag, "gpio_install_isr_service failed: %d (may already be installed)", ret);
+        // Continue anyway - might already be installed
+    }
+    if (ret != ESP_OK) {
+        ESP_LOGE(tag, "gpio_install_isr_service failed: %d (may already be installed)", ret);
+        // Continue anyway - might already be installed
+    }
+    
+    ESP_LOGI(tag, "Adding ISR handlers for %d buttons...", Hid_buttons_count);
     for (uint32_t i = 0; i < Hid_buttons_count; ++i) {
         // zero button state values
         Hid_buttons[i].max_ticks = 0;
         Hid_buttons[i].last_state = Hid_buttons[i].hid_button | BUTTON_RELEASED_BIT;
-        gpio_isr_handler_add(Hid_buttons[i].gpio, gpio_isr_handler1, (void *) Hid_buttons[i].gpio);
+        
+        ret = gpio_isr_handler_add(Hid_buttons[i].gpio, gpio_isr_handler1, (void *) Hid_buttons[i].gpio);
+        if (ret != ESP_OK) {
+            ESP_LOGE(tag, "Failed to add ISR for GPIO%d: %d", Hid_buttons[i].gpio, ret);
+        }
     }
+    ESP_LOGI(tag, "GPIO setup complete");
 }
 
 int
@@ -148,6 +179,8 @@ gpio_btn_task(void* arg)
     TickType_t delay_time = portMAX_DELAY, cur_ticks;
     uint32_t button;
 
+    ESP_LOGI(tag, "GPIO task started, creating semaphore...");
+
     ISR_semaphore = xSemaphoreCreateBinary();
     if (!ISR_semaphore || !buttons_queue) {
         ESP_LOGE(tag, "Can not create semaphore! %p %p", buttons_queue, ISR_semaphore);
@@ -155,10 +188,14 @@ gpio_btn_task(void* arg)
         esp_restart();
     }
 
+    ESP_LOGI(tag, "Semaphore created, configuring GPIOs...");
+
     // when ticks per second is too small, rattle period can be zero, but it is unacceptable
     Ticks_to_wait = pdMS_TO_TICKS(ANTI_RATTLE_TIME) > 0 ? pdMS_TO_TICKS(ANTI_RATTLE_TIME) : 1;
 
     gpio_setup();
+    
+    ESP_LOGI(tag, "GPIO setup complete, entering main loop");
 
     while(1) {
 

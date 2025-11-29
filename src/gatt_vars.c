@@ -151,7 +151,7 @@ size_t Hid_report_map_size = sizeof(Hid_report_map);
 #define NO_ARG_DESCR_MKS  .descriptors = NULL, NO_ARG_MINKEYSIZE
 #define NO_DESCR_MKS      .descriptors = NULL, NO_MINKEYSIZE
 
-#define MY_NOTIFY_FLAGS (BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE)
+#define MY_NOTIFY_FLAGS (BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE)
 
 const struct ble_gatt_svc_def Gatt_svr_included_services[] = {
     {
@@ -268,14 +268,14 @@ const struct ble_gatt_svc_def Gatt_svr_svcs[] = {
                 .uuid = BLE_UUID16_DECLARE(GATT_UUID_HID_INFORMATION),
                 .access_cb = hid_svr_chr_access,
                 .val_handle = &Svc_char_handles[HANDLE_HID_INFORMATION],
-                .flags = BLE_GATT_CHR_F_READ, // | BLE_GATT_CHR_F_READ_ENC,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC,
                 NO_ARG_DESCR_MKS,
             }, {
             /*** HID Control Point */
                 .uuid = BLE_UUID16_DECLARE(GATT_UUID_HID_CONTROL_POINT),
                 .access_cb = hid_svr_chr_access,
                 .val_handle = &Svc_char_handles[HANDLE_HID_CONTROL_POINT],
-                .flags = BLE_GATT_CHR_F_WRITE, // | BLE_GATT_CHR_F_WRITE_ENC,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
                 NO_ARG_DESCR_MKS,
             }, {
             /*** Report Map */
@@ -298,7 +298,7 @@ const struct ble_gatt_svc_def Gatt_svr_svcs[] = {
                 .uuid = BLE_UUID16_DECLARE(GATT_UUID_HID_PROTO_MODE),
                 .access_cb = hid_svr_chr_access,
                 .val_handle = &Svc_char_handles[HANDLE_HID_PROTO_MODE],
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
                 NO_ARG_DESCR_MKS,
             }, {
             /*** Mouse hid report */
@@ -342,7 +342,7 @@ const struct ble_gatt_svc_def Gatt_svr_svcs[] = {
                 .access_cb = ble_svc_report_access,
                 .arg = (void *)HANDLE_HID_KB_OUT_REPORT,
                 .val_handle = &Svc_char_handles[HANDLE_HID_KB_OUT_REPORT],
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_WRITE_NO_RSP,
                 .min_key_size = DEFAULT_MIN_KEY_SIZE,
                 .descriptors = (struct ble_gatt_dsc_def[]) { {
                     /* Report Reference Descriptor */
@@ -386,7 +386,7 @@ const struct ble_gatt_svc_def Gatt_svr_svcs[] = {
                 .access_cb = ble_svc_report_access,
                 .arg = (void *)HANDLE_HID_BOOT_KB_OUT_REPORT,
                 .val_handle = &Svc_char_handles[HANDLE_HID_BOOT_KB_OUT_REPORT],
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_WRITE_NO_RSP,
                 NO_DESCR_MKS,
             }, {
             /*** Mouse input boot hid report */
@@ -402,7 +402,7 @@ const struct ble_gatt_svc_def Gatt_svr_svcs[] = {
                 .access_cb = ble_svc_report_access,
                 .arg = (void *)HANDLE_HID_FEATURE_REPORT,
                 .val_handle = &Svc_char_handles[HANDLE_HID_FEATURE_REPORT],
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
                 .min_key_size = DEFAULT_MIN_KEY_SIZE,
                 .descriptors = (struct ble_gatt_dsc_def[]) { {
                     /* Report Reference Descriptor */

@@ -50,11 +50,14 @@ menu "Example Configuration"
 
     config BLINK_GPIO
         int "Blink GPIO number for CAPSLOCK"
+        range 0 21 if IDF_TARGET_ESP32C3
         range 0 34
+        default 8 if IDF_TARGET_ESP32C3
         default 16
         help
             GPIO number (IOxx) to show caps lock on and off.
-            CapsLock LED does not work yet.
+            On ESP32-C3, GPIO16-17 are used for embedded flash.
+            GPIO2 is the built-in LED on most ESP32-C3 devkits.
             GPIOs 35-39 are input-only so cannot be used as outputs.
 
 endmenu
