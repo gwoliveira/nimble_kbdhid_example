@@ -107,7 +107,7 @@ gpio_reset()
 void
 gpio_setup()
 {
-    gpio_pad_select_gpio(CAPS_GPIO);
+    esp_rom_gpio_pad_select_gpio(CAPS_GPIO);
     gpio_set_direction(CAPS_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(CAPS_GPIO, 0);
 

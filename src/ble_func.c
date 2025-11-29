@@ -1,5 +1,6 @@
 #include "nvs_flash.h"
 #include "esp_log.h"
+#include "esp_nimble_hci.h"
 
 /* BLE */
 #include "console/console.h"
@@ -9,6 +10,7 @@
 #include "gatt_svr.h"
 #include "hid_func.h"
 
+#define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
 #define MAC2STR_REV(a) (a)[5], (a)[4], (a)[3], (a)[2], (a)[1], (a)[0]
 
 static const char *tag = "NimBLEKBD_BLEFUNC";
@@ -331,7 +333,7 @@ void ble_store_config_init(void);
 void
 ble_init()
 {
-    ESP_ERROR_CHECK(esp_nimble_hci_and_controller_init());
+
 
     nimble_port_init();
     /* Initialize the NimBLE host configuration. */
